@@ -23,6 +23,8 @@ import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.authentication.AuthenticationProcessor;
+import org.keycloak.broker.provider.IdentityProvider;
+import org.keycloak.broker.provider.ExchangeTokenToIdentityProviderToken;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.common.constants.ServiceAccountConstants;
 import org.keycloak.common.util.Base64Url;
@@ -34,9 +36,9 @@ import org.keycloak.events.EventType;
 import org.keycloak.models.AuthenticationFlowModel;
 import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
@@ -53,6 +55,7 @@ import org.keycloak.services.managers.ClientManager;
 import org.keycloak.services.managers.ClientSessionCode;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.services.resources.Cors;
+import org.keycloak.services.resources.IdentityBrokerService;
 import org.keycloak.services.resources.admin.permissions.AdminPermissions;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.util.TokenUtil;
@@ -158,7 +161,7 @@ public class TokenEndpoint {
         if (logger.isDebugEnabled()) {
             logger.debugv("CORS preflight from: {0}", headers.getRequestHeaders().getFirst("Origin"));
         }
-        return Cors.add(request, Response.ok()).auth().preflight().build();
+        return Cors.add(request, Response.ok()).auth().preflight().allowedMethods("POST", "OPTIONS").build();
     }
 
     private void checkSsl() {
@@ -582,13 +585,35 @@ public class TokenEndpoint {
         String requestedIssuer = formParams.getFirst(OAuth2Constants.REQUESTED_ISSUER);
 
         if (requestedIssuer == null) {
-
+            return exchangeClientToClient(authResult.getUser(), authResult.getSession());
+        } else {
+            return exchangeToIdentityProvider(authResult, requestedIssuer);
         }
-
-        return exchangeClientToClient(authResult);
     }
 
-    public Response exchangeClientToClient(AuthenticationManager.AuthResult subject) {
+    public Response exchangeToIdentityProvider(AuthenticationManager.AuthResult authResult, String requestedIssuer) {
+        IdentityProviderModel providerModel = realm.getIdentityProviderByAlias(requestedIssuer);
+        if (providerModel == null) {
+            event.error(Errors.UNKNOWN_IDENTITY_PROVIDER);
+            throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Invalid issuer", Response.Status.BAD_REQUEST);
+        }
+
+        IdentityProvider provider = IdentityBrokerService.getIdentityProvider(session, realm, requestedIssuer);
+        if (!(provider instanceof ExchangeTokenToIdentityProviderToken)) {
+            event.error(Errors.UNKNOWN_IDENTITY_PROVIDER);
+            throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Issuer does not support token exchange", Response.Status.BAD_REQUEST);
+        }
+        if (!AdminPermissions.management(session, realm).idps().canExchangeTo(client, providerModel)) {
+            logger.debug("Client not allowed to exchange for linked token");
+            event.error(Errors.NOT_ALLOWED);
+            throw new ErrorResponseException(OAuthErrorException.ACCESS_DENIED, "Client not allowed to exchange", Response.Status.FORBIDDEN);
+        }
+        Response response = ((ExchangeTokenToIdentityProviderToken)provider).exchangeFromToken(uriInfo, client, authResult.getSession(), authResult.getUser(), authResult.getToken(), formParams);
+        return Cors.add(request, Response.fromResponse(response)).auth().allowedOrigins(uriInfo, client).allowedMethods("POST").exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
+
+    }
+
+    protected Response exchangeClientToClient(UserModel targetUser, UserSessionModel targetUserSession) {
         String requestedTokenType = formParams.getFirst(OAuth2Constants.REQUESTED_TOKEN_TYPE);
         if (requestedTokenType == null) {
             requestedTokenType = OAuth2Constants.REFRESH_TOKEN_TYPE;
@@ -617,24 +642,6 @@ public class TokenEndpoint {
             throw new ErrorResponseException(OAuthErrorException.INVALID_CLIENT, "Client requires user consent", Response.Status.BAD_REQUEST);
         }
 
-        boolean exchangeFromAllowed = false;
-        for (String aud : subject.getToken().getAudience()) {
-            ClientModel audClient = realm.getClientByClientId(aud);
-            if (audClient == null) continue;
-            if (audClient.equals(client)) {
-                exchangeFromAllowed = true;
-                break;
-            }
-            if (AdminPermissions.management(session, realm).clients().canExchangeFrom(client, audClient)) {
-                exchangeFromAllowed = true;
-                break;
-            }
-        }
-        if (!exchangeFromAllowed) {
-            logger.debug("Client does not have exchange rights for audience of provided token");
-            event.error(Errors.NOT_ALLOWED);
-            throw new ErrorResponseException(OAuthErrorException.ACCESS_DENIED, "Client not allowed to exchange", Response.Status.FORBIDDEN);
-        }
         if (!AdminPermissions.management(session, realm).clients().canExchangeTo(client, targetClient)) {
             logger.debug("Client does not have exchange rights for target audience");
             event.error(Errors.NOT_ALLOWED);
@@ -644,25 +651,19 @@ public class TokenEndpoint {
         String scope = formParams.getFirst(OAuth2Constants.SCOPE);
 
         AuthenticationSessionModel authSession = new AuthenticationSessionManager(session).createAuthenticationSession(realm, targetClient, false);
-        authSession.setAuthenticatedUser(subject.getUser());
+        authSession.setAuthenticatedUser(targetUser);
         authSession.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
         authSession.setClientNote(OIDCLoginProtocol.ISSUER, Urls.realmIssuer(uriInfo.getBaseUri(), realm.getName()));
         authSession.setClientNote(OIDCLoginProtocol.SCOPE_PARAM, scope);
 
-        UserSessionModel userSession = subject.getSession();
-        event.session(userSession);
+        event.session(targetUserSession);
 
         AuthenticationManager.setRolesAndMappersInSession(authSession);
-        AuthenticatedClientSessionModel clientSession = TokenManager.attachAuthenticationSession(session, userSession, authSession);
+        AuthenticatedClientSessionModel clientSession = TokenManager.attachAuthenticationSession(this.session, targetUserSession, authSession);
 
-        // Notes about client details
-        userSession.setNote(ServiceAccountConstants.CLIENT_ID, client.getClientId());
-        userSession.setNote(ServiceAccountConstants.CLIENT_HOST, clientConnection.getRemoteHost());
-        userSession.setNote(ServiceAccountConstants.CLIENT_ADDRESS, clientConnection.getRemoteAddr());
+        updateUserSessionFromClientAuth(targetUserSession);
 
-        updateUserSessionFromClientAuth(userSession);
-
-        TokenManager.AccessTokenResponseBuilder responseBuilder = tokenManager.responseBuilder(realm, targetClient, event, session, userSession, clientSession)
+        TokenManager.AccessTokenResponseBuilder responseBuilder = tokenManager.responseBuilder(realm, targetClient, event, this.session, targetUserSession, clientSession)
                 .generateAccessToken();
         responseBuilder.getAccessToken().issuedFor(client.getClientId());
 
