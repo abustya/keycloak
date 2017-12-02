@@ -31,6 +31,8 @@ public class OIDCAdvancedConfigWrapper {
     private static final String USER_INFO_RESPONSE_SIGNATURE_ALG = "user.info.response.signature.alg";
 
     private static final String REQUEST_OBJECT_SIGNATURE_ALG = "request.object.signature.alg";
+    
+    private static final String REQUEST_OBJECT_REQUIRED = "request.object.required";
 
     private static final String JWKS_URL = "jwks.url";
 
@@ -76,6 +78,16 @@ public class OIDCAdvancedConfigWrapper {
     public void setRequestObjectSignatureAlg(Algorithm alg) {
         String algStr = alg==null ? null : alg.toString();
         setAttribute(REQUEST_OBJECT_SIGNATURE_ALG, algStr);
+    }
+    
+    public boolean isRequestObjectRequired() {
+        String requiestObjectRequired = getAttribute(REQUEST_OBJECT_REQUIRED);
+        return "true".equals(requiestObjectRequired);
+    }
+    
+    public void setRequestObjectRequired(boolean requestObjectRequired) {
+        String val = String.valueOf(requestObjectRequired);
+        setAttribute(REQUEST_OBJECT_REQUIRED, val);
     }
 
     public boolean isUseJwksUrl() {

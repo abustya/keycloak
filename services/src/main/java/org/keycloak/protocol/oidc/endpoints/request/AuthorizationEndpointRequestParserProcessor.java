@@ -23,6 +23,7 @@ import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.services.ErrorPageException;
 import org.keycloak.services.ServicesLogger;
@@ -47,6 +48,10 @@ public class AuthorizationEndpointRequestParserProcessor {
 
             if (requestParam != null && requestUriParam != null) {
                 throw new RuntimeException("Illegal to use both 'request' and 'request_uri' parameters together");
+            }
+            
+            if (OIDCAdvancedConfigWrapper.fromClientModel(client).isRequestObjectRequired() && requestParam == null && requestUriParam == null) {
+                throw new RuntimeException("Client is required to use 'request' or 'request_uri' parameter.");
             }
 
             if (requestParam != null) {
