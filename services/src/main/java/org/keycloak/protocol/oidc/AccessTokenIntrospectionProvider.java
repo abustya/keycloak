@@ -54,7 +54,7 @@ public class AccessTokenIntrospectionProvider implements TokenIntrospectionProvi
 
             try {
                 RSATokenVerifier verifier = RSATokenVerifier.create(token)
-                        .realmUrl(Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName()));
+                        .checkRealmUrl(false);
 
                 PublicKey publicKey = session.keys().getRsaPublicKey(realm, verifier.getHeader().getKeyId());
                 if (publicKey == null) {
@@ -94,7 +94,7 @@ public class AccessTokenIntrospectionProvider implements TokenIntrospectionProvi
     protected AccessToken toAccessToken(String token) {
         try {
             RSATokenVerifier verifier = RSATokenVerifier.create(token)
-                    .realmUrl(Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName()));
+                    .checkRealmUrl(false);
 
             PublicKey publicKey = session.keys().getRsaPublicKey(realm, verifier.getHeader().getKeyId());
             verifier.publicKey(publicKey);
