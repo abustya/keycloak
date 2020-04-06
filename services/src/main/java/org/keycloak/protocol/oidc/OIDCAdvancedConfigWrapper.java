@@ -32,6 +32,7 @@ public class OIDCAdvancedConfigWrapper {
 
     private static final String REQUEST_OBJECT_SIGNATURE_ALG = "request.object.signature.alg";
     
+	// Request object mandatory for client
     private static final String REQUEST_OBJECT_REQUIRED = "request.object.required";
 
     private static final String JWKS_URL = "jwks.url";
@@ -80,6 +81,7 @@ public class OIDCAdvancedConfigWrapper {
         setAttribute(REQUEST_OBJECT_SIGNATURE_ALG, algStr);
     }
     
+	// Request object mandatory for client
     public boolean isRequestObjectRequired() {
         String requiestObjectRequired = getAttribute(REQUEST_OBJECT_REQUIRED);
         return "true".equals(requiestObjectRequired);

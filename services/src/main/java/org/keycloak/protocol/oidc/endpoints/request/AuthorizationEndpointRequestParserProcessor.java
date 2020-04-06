@@ -50,6 +50,7 @@ public class AuthorizationEndpointRequestParserProcessor {
                 throw new RuntimeException("Illegal to use both 'request' and 'request_uri' parameters together");
             }
             
+			// Check if request object is mandatory for the client
             if (OIDCAdvancedConfigWrapper.fromClientModel(client).isRequestObjectRequired() && requestParam == null && requestUriParam == null) {
                 throw new RuntimeException("Client is required to use 'request' or 'request_uri' parameter.");
             }
